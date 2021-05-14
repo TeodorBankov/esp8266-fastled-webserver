@@ -1,22 +1,5 @@
-/*
-   ESP8266 + FastLED + IR Remote + MSGEQ7: https://github.com/jasoncoon/esp8266-fastled-webserver
-   Copyright (C) 2015 Jason Coon
 
-   This program is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, either version 3 of the License, or
-   (at your option) any later version.
-
-   This program is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
-
-#include "FastLED.h"
+#include <FastLED.h>
 FASTLED_USING_NAMESPACE
 
 extern "C" {
@@ -27,52 +10,32 @@ extern "C" {
 #include <ESP8266WebServer.h>
 #include <FS.h>
 #include <EEPROM.h>
-#include "GradientPalettes.h"
+#include "GradientPalletes.h";
 
-const bool apMode = false;
-
-// AP mode password
-const char WiFiAPPSK[] = "";
-
-// Wi-Fi network to connect to (if not in AP mode)
-const char *ssid = "__ENTER_WIFI_NAME_HERE__";
-const char *password = "__ENTER_WIFI_PASSWORD_HERE__";
+const char *ssid = "YOUR WIFI NAME GOES HERE;
+const char *password = "your WIFI PASSWORD GOES HERE"; 
 
 ESP8266WebServer server(80);
 
-#define DATA_PIN      4     // for Huzzah: Pins w/o special function:  #4, #5, #12, #13, #14; // #16 does not work :(
-#define LED_TYPE      WS2812B
-#define COLOR_ORDER   GRB
-#define NUM_LEDS      30
+#define DATA_PIN      2	        // data pin on the esp
+#define LED_TYPE      WS2812B	// define your model of LEDS here
+#define COLOR_ORDER   GRB	// color order
+#define NUM_LEDS      300	// number of LEDs
 
-#define MILLI_AMPS         4000     // IMPORTANT: set here the max milli-Amps of your power supply 5V 2A = 2000
-#define FRAMES_PER_SECOND  60 // here you can control the speed. With the Access Point / Web Server the animations run a bit slower.
+#define FRAMES_PER_SECOND  60 
 
 CRGB ledsPrev[NUM_LEDS];
 CRGB leds[NUM_LEDS];
 
 uint8_t patternIndex = 0;
 
-const uint8_t brightnessCount = 5;
-uint8_t brightnessMap[brightnessCount] = { 16, 32, 64, 128, 255 };
-int brightnessIndex = 0;
-uint8_t brightness = brightnessMap[brightnessIndex];
-
 #define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
 
-// ten seconds per color palette makes a good demo
-// 20-120 is better for deployment
 #define SECONDS_PER_PALETTE 30
 
-///////////////////////////////////////////////////////////////////////
-
-// Forward declarations of an array of cpt-city gradient palettes, and
-// a count of how many there are.  The actual color palette definitions
-// are at the bottom of this file.
 extern const TProgmemRGBGradientPalettePtr gGradientPalettes[];
 extern const uint8_t gGradientPaletteCount;
 
-// Current palette number from the 'playlist' of color palettes
 uint8_t gCurrentPaletteNumber = 0;
 
 CRGBPalette16 gCurrentPalette( CRGB::Black);
@@ -92,15 +55,27 @@ CRGB solidColor = CRGB::Black;
 
 uint8_t power = 0;
 
+IPAddress Ip(192,168,5,160); 
+IPAddress Gateway(192,168,5,1); 
+IPAddress Subnet(255,255,255,0);
+
+const uint8_t brightnessCount = 5;
+uint8_t brightnessMap[brightnessCount] = { 16, 32, 64, 128, 255 };
+int brightnessIndex = 0;
+uint8_t brightness = brightnessMap[brightnessIndex];
+
 void setup(void) {
+  
+
   Serial.begin(115200);
+
   delay(100);
   Serial.setDebugOutput(true);
 
   FastLED.addLeds<LED_TYPE, DATA_PIN, COLOR_ORDER>(leds, NUM_LEDS);         // for WS2812 (Neopixel)
   FastLED.setCorrection(TypicalLEDStrip);
   FastLED.setBrightness(brightness);
-  FastLED.setMaxPowerInVoltsAndMilliamps(5, MILLI_AMPS);
+
   fill_solid(leds, NUM_LEDS, solidColor);
   FastLED.show();
 
@@ -118,7 +93,7 @@ void setup(void) {
   Serial.print( F("Flash ID: ") ); Serial.println(spi_flash_get_id());
   Serial.print( F("Flash Size: ") ); Serial.println(ESP.getFlashChipRealSize());
   Serial.print( F("Vcc: ") ); Serial.println(ESP.getVcc());
-  Serial.println();
+  Serial.println("");
 
   SPIFFS.begin();
   {
@@ -129,51 +104,24 @@ void setup(void) {
       Serial.printf("FS File: %s, size: %s\n", fileName.c_str(), String(fileSize).c_str());
     }
     Serial.printf("\n");
-  }
+  } 
 
-  if (apMode)
-  {
-    WiFi.mode(WIFI_AP);
-
-    // Do a little work to get a unique-ish name. Append the
-    // last two bytes of the MAC (HEX'd) to "Thing-":
-    uint8_t mac[WL_MAC_ADDR_LENGTH];
-    WiFi.softAPmacAddress(mac);
-    String macID = String(mac[WL_MAC_ADDR_LENGTH - 2], HEX) +
-                   String(mac[WL_MAC_ADDR_LENGTH - 1], HEX);
-    macID.toUpperCase();
-    String AP_NameString = "ESP8266 Thing " + macID;
-
-    char AP_NameChar[AP_NameString.length() + 1];
-    memset(AP_NameChar, 0, AP_NameString.length() + 1);
-
-    for (int i = 0; i < AP_NameString.length(); i++)
-      AP_NameChar[i] = AP_NameString.charAt(i);
-
-    WiFi.softAP(AP_NameChar, WiFiAPPSK);
-
-    Serial.printf("Connect to Wi-Fi access point: %s\n", AP_NameChar);
-    Serial.println("and open http://192.168.4.1 in your browser");
-  }
-  else
-  {
-    WiFi.mode(WIFI_STA);
     Serial.printf("Connecting to %s\n", ssid);
-    if (String(WiFi.SSID()) != String(ssid)) {
-      WiFi.begin(ssid, password);
-    }
+    WiFi.hostname("Bed RGB-strip");
+    WiFi.config(Ip, Gateway, Subnet);
+    WiFi.begin(ssid, password);
+    Serial.println("");
 
     while (WiFi.status() != WL_CONNECTED) {
-      delay(500);
+      delay(100);
       Serial.print(".");
     }
 
     Serial.print("Connected! Open http://");
     Serial.print(WiFi.localIP());
     Serial.println(" in your browser");
-  }
 
-  server.on("/all", HTTP_GET, []() {
+    server.on("/all", HTTP_GET, []() {
     sendAll();
   });
 
@@ -187,6 +135,14 @@ void setup(void) {
     sendPower();
   });
 
+  server.on("/powerOn", HTTP_GET, []() {
+    setPower(1);
+    sendPower();
+  });
+  server.on("/powerOff", HTTP_GET, []() {
+    setPower(0);
+    sendPower();
+  });
   server.on("/solidColor", HTTP_GET, []() {
     sendSolidColor();
   });
@@ -198,7 +154,7 @@ void setup(void) {
     setSolidColor(r.toInt(), g.toInt(), b.toInt());
     sendSolidColor();
   });
-
+  
   server.on("/solidHexColor", HTTP_GET, []() {
     sendSolidHexColor();
   });
@@ -206,12 +162,16 @@ void setup(void) {
   server.on("/solidHexColor", HTTP_POST, []() {
     String hex = server.arg("value");
     long number = strtol( &hex[0], NULL, 16);
+    //Serial.println(number);
+    // Split them up into r, g, b values730011
 
-    // Split them up into r, g, b values
     long r = number >> 16;
     long g = number >> 8 & 0xFF;
     long b = number & 0xFF;
-
+    Serial.println(r);
+    Serial.println(g);
+    Serial.println(b);
+    setPower(1);
     setSolidColor(r, g, b);
     sendSolidHexColor();
   });
@@ -278,6 +238,7 @@ void setup(void) {
     sendPalette();
   });
 
+
   server.serveStatic("/index.html", SPIFFS, "/index.html");
   server.serveStatic("/fonts", SPIFFS, "/fonts", "max-age=86400");
   server.serveStatic("/js", SPIFFS, "/js");
@@ -299,19 +260,19 @@ typedef struct {
 } PatternAndName;
 typedef PatternAndName PatternAndNameList[];
 
-// List of patterns to cycle through.  Each is defined as a separate function below.
+// List of patterns to cycle through. Each is defined as a separate function below.
 PatternAndNameList patterns = {
   { colorwaves, "Color Waves" },
-  { palettetest, "Palette Test" },
-  { pride, "Pride" },
-  { rainbow, "Rainbow" },
+  { palettetest, "Pallete test" },
+  { pride, "pride" },
+  { rainbow, "rainbow" },
   { rainbowWithGlitter, "Rainbow With Glitter" },
   { confetti, "Confetti" },
   { sinelon, "Sinelon" },
   { juggle, "Juggle" },
   { bpm, "BPM" },
   { showSolidColor, "Solid Color" },
-};
+  };
 
 const uint8_t patternCount = ARRAY_SIZE(patterns);
 
@@ -319,7 +280,7 @@ typedef struct {
   CRGBPalette16 palette;
   String name;
 } PaletteAndName;
-typedef PaletteAndName PaletteAndNameList[];
+typedef PaletteAndName PaletteAdnNameList[];
 
 const CRGBPalette16 palettes[] = {
   RainbowColors_p,
@@ -346,12 +307,12 @@ const String paletteNames[paletteCount] = {
 };
 
 void loop(void) {
-  // Add entropy to random number generator; we use a lot of it.
+  
   random16_add_entropy(random(65535));
-
+  
   server.handleClient();
 
-  if (power == 0) {
+  if(power == 0){
     fill_solid(leds, NUM_LEDS, CRGB::Black);
     FastLED.show();
     FastLED.delay(15);
@@ -359,17 +320,15 @@ void loop(void) {
   }
 
   EVERY_N_MILLISECONDS( 20 ) {
-    gHue++;  // slowly cycle the "base color" through the rainbow
+    gHue++; //slow cycle to the next color
   }
 
-  // change to a new cpt-city gradient palette
-  EVERY_N_SECONDS( SECONDS_PER_PALETTE ) {
+   EVERY_N_SECONDS( SECONDS_PER_PALETTE ) {
     gCurrentPaletteNumber = addmod8( gCurrentPaletteNumber, 1, gGradientPaletteCount);
     gTargetPalette = gGradientPalettes[ gCurrentPaletteNumber ];
   }
 
-  // slowly blend the current cpt-city gradient palette to the next
-  EVERY_N_MILLISECONDS(40) {
+   EVERY_N_MILLISECONDS(40) {
     nblendPaletteTowardPalette( gCurrentPalette, gTargetPalette, 16);
   }
 
